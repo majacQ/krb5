@@ -40,6 +40,7 @@ DICTIONARY = """
 ATTRIBUTE\tUser-Name\t1\tstring
 ATTRIBUTE\tUser-Password\t2\toctets
 ATTRIBUTE\tNAS-Identifier\t32\tstring
+ATTRIBUTE\tMessage-Authenticator\t80\toctets
 """
 
 class TestServer(server.Server):
@@ -50,9 +51,9 @@ class TestServer(server.Server):
 
         for key in pkt.keys():
             if key == "User-Password":
-                passwd = map(pkt.PwDecrypt, pkt[key])
+                passwd = [pkt.PwDecrypt(x) for x in pkt[key]]
 
-        reply = self.CreateReplyPacket(pkt)
+        reply = self.CreateReplyPacket(pkt, message_authenticator=True)
         if passwd == ['accept']:
             reply.code = packet.AccessAccept
         else:
@@ -61,8 +62,8 @@ class TestServer(server.Server):
 
 srv = TestServer(addresses=["localhost"],
                  hosts={"127.0.0.1":
-                        server.RemoteHost("127.0.0.1", "foo", "localhost")},
-                 dict=dictionary.Dictionary(StringIO.StringIO(DICTIONARY)))
+                        server.RemoteHost("127.0.0.1", b"foo", "localhost")},
+                 dict=dictionary.Dictionary(StringIO(DICTIONARY)))
 
 # Write a sentinel character to let the parent process know we're listening.
 sys.stdout.write("~")

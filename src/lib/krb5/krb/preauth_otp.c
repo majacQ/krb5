@@ -214,7 +214,7 @@ codec_encode_challenge(krb5_context ctx, krb5_pa_otp_challenge *chl,
     k5_json_string str = NULL;
     k5_json_array arr = NULL;
     krb5_error_code retval;
-    int i;
+    size_t i;
 
     retval = k5_json_object_create(&obj);
     if (retval != 0)
@@ -378,8 +378,9 @@ codec_decode_answer(krb5_context context, const char *answer,
 {
     krb5_error_code retval;
     k5_json_value val = NULL;
-    krb5_int32 indx, i;
+    krb5_int32 indx;
     krb5_data tmp;
+    size_t i;
 
     if (answer == NULL)
         return EBADMSG;
@@ -396,7 +397,7 @@ codec_decode_answer(krb5_context context, const char *answer,
         goto cleanup;
 
     for (i = 0; tis[i] != NULL; i++) {
-        if (i == indx) {
+        if (i == (size_t)indx) {
             retval = codec_value_to_data(val, "value", &tmp);
             if (retval != 0 && retval != ENOENT)
                 goto cleanup;
@@ -504,38 +505,34 @@ prompt_for_tokeninfo(krb5_context context, krb5_prompter_fct prompter,
                      void *prompter_data, krb5_otp_tokeninfo **tis,
                      krb5_otp_tokeninfo **out_ti)
 {
-    char *banner = NULL, *tmp, response[1024];
+    char response[1024], *prompt;
     krb5_otp_tokeninfo *ti = NULL;
     krb5_error_code retval = 0;
-    int i = 0, j = 0;
+    struct k5buf buf;
+    size_t i = 0, j = 0;
 
+    k5_buf_init_dynamic(&buf);
+    k5_buf_add(&buf, _("Please choose from the following:\n"));
     for (i = 0; tis[i] != NULL; i++) {
-        if (asprintf(&tmp, "%s\t%d. %s %.*s\n",
-                     banner ? banner :
-                         _("Please choose from the following:\n"),
-                     i + 1, _("Vendor:"), tis[i]->vendor.length,
-                     tis[i]->vendor.data) < 0) {
-            free(banner);
-            return ENOMEM;
-        }
-
-        free(banner);
-        banner = tmp;
+        k5_buf_add_fmt(&buf, "\t%ld. %s ", (long)(i + 1), _("Vendor:"));
+        k5_buf_add_len(&buf, tis[i]->vendor.data, tis[i]->vendor.length);
+        k5_buf_add(&buf, "\n");
     }
+    prompt = k5_buf_cstring(&buf);
+    if (prompt == NULL)
+        return ENOMEM;
 
     do {
-        retval = doprompt(context, prompter, prompter_data,
-                          banner, _("Enter #"), response, sizeof(response));
-        if (retval != 0) {
-            free(banner);
-            return retval;
-        }
+        retval = doprompt(context, prompter, prompter_data, prompt,
+                          _("Enter #"), response, sizeof(response));
+        if (retval != 0)
+            goto cleanup;
 
         errno = 0;
-        j = strtol(response, NULL, 0);
+        j = strtoul(response, NULL, 0);
         if (errno != 0) {
-            free(banner);
-            return errno;
+            retval = errno;
+            goto cleanup;
         }
         if (j < 1 || j > i)
             continue;
@@ -543,9 +540,11 @@ prompt_for_tokeninfo(krb5_context context, krb5_prompter_fct prompter,
         ti = tis[--j];
     } while (ti == NULL);
 
-    free(banner);
     *out_ti = ti;
-    return 0;
+
+cleanup:
+    k5_buf_free(&buf);
+    return retval;
 }
 
 /* Builds a challenge string from the given tokeninfo. */
@@ -733,7 +732,7 @@ prompt_for_token(krb5_context context, krb5_prompter_fct prompter,
     krb5_otp_tokeninfo **filtered = NULL;
     krb5_otp_tokeninfo *ti = NULL;
     krb5_error_code retval;
-    int i, challengers = 0;
+    size_t i, challengers = 0;
     char *challenge = NULL;
     char otpvalue[1024];
     krb5_data value, pin;

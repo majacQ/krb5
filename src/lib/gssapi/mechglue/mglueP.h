@@ -79,8 +79,6 @@ typedef struct gss_cred_id_struct {
 /* it to initialize the GSSAPI library		  */
 int gssint_mechglue_initialize_library(void);
 
-OM_uint32 gssint_get_mech_type_oid(gss_OID OID, gss_buffer_t token);
-
 /*
  * This table is used to access mechanism-specific versions of the GSSAPI
  * functions.  It contains all of the functions defined in gssapi.h except for
@@ -801,40 +799,9 @@ OM_uint32 gssint_create_union_context(
 	gss_union_ctx_id_t *	/* ctx_out */
 );
 
-OM_uint32 gssint_copy_oid_set(
-	OM_uint32 *,			/* minor_status */
-	const gss_OID_set_desc * const,	/* oid set */
-	gss_OID_set *			/* new oid set */
-);
-
-gss_OID gss_find_mechanism_from_name_type (gss_OID); /* name_type */
-
-OM_uint32 gss_add_mech_name_type
-	   (OM_uint32 *,	/* minor_status */
-	    gss_OID,		/* name_type */
-	    gss_OID		/* mech */
-	       );
-
 /*
  * Sun extensions to GSS-API v2
  */
-
-int
-gssint_get_der_length(
-	unsigned char **,	/* buf */
-	unsigned int,		/* buf_len */
-	unsigned int *		/* bytes */
-);
-
-unsigned int
-gssint_der_length_size(unsigned int /* len */);
-
-int
-gssint_put_der_length(
-	unsigned int,		/* length */
-	unsigned char **,	/* buf */
-	unsigned int		/* max_len */
-);
 
 OM_uint32
 gssint_wrap_aead (gss_mechanism,	/* mech */

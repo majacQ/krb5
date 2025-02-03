@@ -75,13 +75,13 @@ free_mkey_list(krb5_context context, krb5_keylist_node *mkey_list)
 }
 
 int
-kdb_init_lock_list()
+kdb_init_lock_list(void)
 {
     return k5_mutex_finish_init(&db_lock);
 }
 
 static int
-kdb_lock_list()
+kdb_lock_list(void)
 {
     int err;
     err = CALL_INIT_FUNCTION (kdb_init_lock_list);
@@ -92,14 +92,14 @@ kdb_lock_list()
 }
 
 void
-kdb_fini_lock_list()
+kdb_fini_lock_list(void)
 {
     if (INITIALIZER_RAN(kdb_init_lock_list))
         k5_mutex_destroy(&db_lock);
 }
 
 static void
-kdb_unlock_list()
+kdb_unlock_list(void)
 {
     k5_mutex_unlock(&db_lock);
 }
@@ -315,7 +315,6 @@ copy_vtable(const kdb_vftabl *in, kdb_vftabl *out)
     out->promote_db = in->promote_db;
     out->decrypt_key_data = in->decrypt_key_data;
     out->encrypt_key_data = in->encrypt_key_data;
-    out->sign_authdata = in->sign_authdata;
     out->check_transited_realms = in->check_transited_realms;
     out->check_policy_as = in->check_policy_as;
     out->check_policy_tgs = in->check_policy_tgs;
@@ -325,8 +324,7 @@ copy_vtable(const kdb_vftabl *in, kdb_vftabl *out)
     out->free_principal_e_data = in->free_principal_e_data;
     out->get_s4u_x509_principal = in->get_s4u_x509_principal;
     out->allowed_to_delegate_from = in->allowed_to_delegate_from;
-    out->get_authdata_info = in->get_authdata_info;
-    out->free_authdata_info = in->free_authdata_info;
+    out->issue_pac = in->issue_pac;
 
     /* Set defaults for optional fields. */
     if (out->fetch_master_key == NULL)
@@ -355,7 +353,7 @@ extern kdb_vftabl krb5_ldap_kdb_function_table;
 #endif
 
 static krb5_error_code
-kdb_load_library(krb5_context kcontext, char *lib_name, db_library *libptr)
+load_library(krb5_context kcontext, const char *lib_name, db_library *libptr)
 {
     krb5_error_code status;
     db_library lib;
@@ -398,7 +396,7 @@ static char *db_dl_location[] = DEFAULT_KDB_LIB_PATH;
 #define db_dl_n_locations (sizeof(db_dl_location) / sizeof(db_dl_location[0]))
 
 static krb5_error_code
-kdb_load_library(krb5_context kcontext, char *lib_name, db_library *lib)
+load_library(krb5_context kcontext, const char *lib_name, db_library *lib)
 {
     krb5_error_code status = 0;
     int     ndx;
@@ -498,7 +496,7 @@ clean_n_exit:
 #endif /* end of _KDB5_STATIC_LINK */
 
 static krb5_error_code
-kdb_find_library(krb5_context kcontext, char *lib_name, db_library *lib)
+find_library(krb5_context kcontext, const char *lib_name, db_library *lib)
 {
     /* lock here so that no two threads try to do the same at the same time */
     krb5_error_code status = 0;
@@ -526,7 +524,7 @@ kdb_find_library(krb5_context kcontext, char *lib_name, db_library *lib)
     }
 
     /* module not found. create and add to list */
-    status = kdb_load_library(kcontext, lib_name, lib);
+    status = load_library(kcontext, lib_name, lib);
     if (status)
         goto clean_n_exit;
 
@@ -587,43 +585,52 @@ clean_n_exit:
 }
 
 krb5_error_code
-krb5_db_setup_lib_handle(krb5_context kcontext)
+krb5_db_load_module(krb5_context kcontext, const char *name)
 {
-    char   *library = NULL;
-    krb5_error_code status = 0;
+    krb5_error_code ret;
     db_library lib = NULL;
     kdb5_dal_handle *dal_handle = NULL;
 
-    dal_handle = calloc((size_t) 1, sizeof(kdb5_dal_handle));
-    if (dal_handle == NULL) {
-        status = ENOMEM;
-        goto clean_n_exit;
-    }
+    if (name == NULL)
+        return EINVAL;
+    if (kcontext->dal_handle != NULL)
+        return EEXIST;
 
-    status = kdb_get_library_name(kcontext, &library);
-    if (library == NULL) {
-        k5_prependmsg(kcontext, status,
-                      _("Cannot initialize database library"));
-        goto clean_n_exit;
-    }
+    dal_handle = k5alloc(sizeof(*dal_handle), &ret);
+    if (dal_handle == NULL)
+        goto cleanup;
 
-    status = kdb_find_library(kcontext, library, &lib);
-    if (status)
-        goto clean_n_exit;
+    ret = find_library(kcontext, name, &lib);
+    if (ret)
+        goto cleanup;
 
     dal_handle->lib_handle = lib;
     kcontext->dal_handle = dal_handle;
+    lib = NULL;
+    dal_handle = NULL;
 
-clean_n_exit:
-    free(library);
+cleanup:
+    free(dal_handle);
+    if (lib != NULL)
+        kdb_free_library(lib);
+    return ret;
+}
 
-    if (status) {
-        free(dal_handle);
-        if (lib)
-            kdb_free_library(lib);
+krb5_error_code
+krb5_db_setup_lib_handle(krb5_context kcontext)
+{
+    char *library = NULL;
+    krb5_error_code ret;
+
+    ret = kdb_get_library_name(kcontext, &library);
+    if (library == NULL) {
+        k5_prependmsg(kcontext, ret, _("Cannot initialize database library"));
+        return ret;
     }
 
-    return status;
+    ret = krb5_db_load_module(kcontext, library);
+    free(library);
+    return ret;
 }
 
 static krb5_error_code
@@ -851,7 +858,8 @@ krb5_db_free_principal(krb5_context kcontext, krb5_db_entry *entry)
 static void
 free_db_args(char **db_args)
 {
-    int i;
+    size_t i;
+
     if (db_args) {
         for (i = 0; db_args[i]; i++)
             free(db_args[i]);
@@ -864,7 +872,7 @@ extract_db_args_from_tl_data(krb5_context kcontext, krb5_tl_data **start,
                              krb5_int16 *count, char ***db_argsp)
 {
     char **db_args = NULL;
-    int db_args_size = 0;
+    size_t db_args_size = 0;
     krb5_tl_data *prev, *curr, *next;
     krb5_error_code status;
 
@@ -2597,34 +2605,6 @@ krb5_db_set_context(krb5_context context, void *db_context)
 }
 
 krb5_error_code
-krb5_db_sign_authdata(krb5_context kcontext, unsigned int flags,
-                      krb5_const_principal client_princ,
-                      krb5_const_principal server_princ, krb5_db_entry *client,
-                      krb5_db_entry *server, krb5_db_entry *header_server,
-                      krb5_db_entry *local_tgt, krb5_keyblock *client_key,
-                      krb5_keyblock *server_key, krb5_keyblock *header_key,
-                      krb5_keyblock *local_tgt_key, krb5_keyblock *session_key,
-                      krb5_timestamp authtime, krb5_authdata **tgt_auth_data,
-                      void *ad_info, krb5_data ***auth_indicators,
-                      krb5_authdata ***signed_auth_data)
-{
-    krb5_error_code status = 0;
-    kdb_vftabl *v;
-
-    *signed_auth_data = NULL;
-    status = get_vftabl(kcontext, &v);
-    if (status)
-        return status;
-    if (v->sign_authdata == NULL)
-        return KRB5_PLUGIN_OP_NOTSUPP;
-    return v->sign_authdata(kcontext, flags, client_princ, server_princ,
-                            client, server, header_server, local_tgt,
-                            client_key, server_key, header_key, local_tgt_key,
-                            session_key, authtime, tgt_auth_data, ad_info,
-                            auth_indicators, signed_auth_data);
-}
-
-krb5_error_code
 krb5_db_check_transited_realms(krb5_context kcontext,
                                const krb5_data *tr_contents,
                                const krb5_data *client_realm,
@@ -2757,7 +2737,7 @@ krb5_error_code
 krb5_db_allowed_to_delegate_from(krb5_context kcontext,
                                  krb5_const_principal client,
                                  krb5_const_principal server,
-                                 void *server_ad_info,
+                                 krb5_pac server_pac,
                                  const krb5_db_entry *proxy)
 {
     krb5_error_code ret;
@@ -2768,50 +2748,8 @@ krb5_db_allowed_to_delegate_from(krb5_context kcontext,
         return ret;
     if (v->allowed_to_delegate_from == NULL)
         return KRB5_PLUGIN_OP_NOTSUPP;
-    return v->allowed_to_delegate_from(kcontext, client, server,
-                                       server_ad_info, proxy);
-}
-
-krb5_error_code
-krb5_db_get_authdata_info(krb5_context kcontext, unsigned int flags,
-                          krb5_authdata **in_authdata,
-                          krb5_const_principal client_princ,
-                          krb5_const_principal server_princ,
-                          krb5_keyblock *server_key, krb5_keyblock *krbtgt_key,
-                          krb5_db_entry *krbtgt, krb5_timestamp authtime,
-                          void **ad_info_out, krb5_principal *client_out)
-{
-    krb5_error_code ret;
-    kdb_vftabl *v;
-
-    *ad_info_out = NULL;
-    if (client_out != NULL)
-        *client_out = NULL;
-
-    ret = get_vftabl(kcontext, &v);
-    if (ret)
-        return ret;
-    if (v->get_authdata_info == NULL)
-        return KRB5_PLUGIN_OP_NOTSUPP;
-    return v->get_authdata_info(kcontext, flags, in_authdata, client_princ,
-                                server_princ, server_key, krbtgt_key, krbtgt,
-                                authtime, ad_info_out, client_out);
-}
-
-void
-krb5_db_free_authdata_info(krb5_context kcontext, void *ad_info)
-{
-    krb5_error_code ret;
-    kdb_vftabl *v;
-
-    if (ad_info == NULL)
-        return;
-    ret = get_vftabl(kcontext, &v);
-    if (ret)
-        return;
-    if (v->free_authdata_info == NULL)
-        return;
-    v->free_authdata_info(kcontext, ad_info);
+    return v->allowed_to_delegate_from(kcontext, client, server, server_pac,
+                                       proxy);
 }
 
 void
@@ -2831,4 +2769,23 @@ krb5_dbe_sort_key_data(krb5_key_data *key_data, size_t key_data_length)
             j--;
         }
     }
+}
+
+krb5_error_code
+krb5_db_issue_pac(krb5_context context, unsigned int flags,
+                  krb5_db_entry *client, krb5_keyblock *replaced_reply_key,
+                  krb5_db_entry *server, krb5_db_entry *krbtgt,
+                  krb5_timestamp authtime, krb5_pac old_pac, krb5_pac new_pac,
+                  krb5_data ***auth_indicators)
+{
+    krb5_error_code ret;
+    kdb_vftabl *v;
+
+    ret = get_vftabl(context, &v);
+    if (ret)
+        return ret;
+    if (v->issue_pac == NULL)
+        return KRB5_PLUGIN_OP_NOTSUPP;
+    return v->issue_pac(context, flags, client, replaced_reply_key, server,
+                        krbtgt, authtime, old_pac, new_pac, auth_indicators);
 }

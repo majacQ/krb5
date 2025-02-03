@@ -139,6 +139,9 @@ fi
 if test "$use_linker_fini_option" = yes; then
   AC_DEFINE(USE_LINKER_FINI_OPTION,1,[Define if link-time options for library finalization will be used])
 fi
+if test "$lib_unload_prevented" = yes; then
+  AC_DEFINE(LIB_UNLOAD_PREVENTED,1,[Define if library unloading is prevented])
+fi
 ])
 
 dnl find dlopen
@@ -409,8 +412,8 @@ else
       [[struct sockaddr_in6 in;
         AF_INET6;
         IN6_IS_ADDR_LINKLOCAL(&in.sin6_addr);]])],
-    [krb5_cv_inet6=yes], [krb5_cv_inet6=no])])
-fi
+    [krb5_cv_inet6=yes], [krb5_cv_inet6=no])
+fi])
 AC_MSG_RESULT($krb5_cv_inet6)
 if test "$krb5_cv_inet6" = no && test "$ac_cv_func_inet_ntop" = yes; then
 AC_MSG_CHECKING(for IPv6 compile-time support with -DINET6)
@@ -545,7 +548,7 @@ if test "$GCC" = yes ; then
     TRY_WARN_CC_FLAG(-Wno-format-zero-length)
     # Other flags here may not be supported on some versions of
     # gcc that people want to use.
-    for flag in overflow strict-overflow missing-format-attribute missing-prototypes return-type missing-braces parentheses switch unused-function unused-label unused-variable unused-value unknown-pragmas sign-compare newline-eof error=uninitialized no-maybe-uninitialized error=pointer-arith error=int-conversion error=incompatible-pointer-types error=discarded-qualifiers error=implicit-int ; do
+    for flag in overflow strict-overflow missing-format-attribute missing-prototypes return-type missing-braces parentheses switch unused-function unused-label unused-variable unused-value unknown-pragmas sign-compare newline-eof error=uninitialized no-maybe-uninitialized error=pointer-arith error=int-conversion error=incompatible-pointer-types error=discarded-qualifiers error=implicit-int error=strict-prototypes; do
       TRY_WARN_CC_FLAG(-W$flag)
     done
     #  old-style-definition? generates many, many warnings
@@ -594,10 +597,6 @@ if test "$GCC" = yes ; then
       AC_MSG_NOTICE(disabling the use of common storage on Darwin)
       CFLAGS="$CFLAGS -fno-common"
       ;;
-    esac
-    case "$LD $LDFLAGS" in
-    *-Wl,-search_paths_first*) ;;
-    *) LDFLAGS="${LDFLAGS} -Wl,-search_paths_first" ;;
     esac
   fi
 else
@@ -716,53 +715,6 @@ KRB5_NEED_PROTO([#ifdef HAVE_UNISTD_H
 #endif],daemon,1)])dnl
 
 dnl
-dnl KRB5_AC_NEED_LIBGEN --- check if libgen needs to be linked in for
-dnl 				compile/step	
-dnl
-dnl
-AC_DEFUN(KRB5_AC_NEED_LIBGEN,[
-AC_REQUIRE([AC_PROG_CC])dnl
-dnl
-dnl regcomp is present but non-functional on Solaris 2.4
-dnl
-AC_MSG_CHECKING(for working regcomp)
-AC_CACHE_VAL(ac_cv_func_regcomp,
-[AC_RUN_IFELSE(
-  [AC_LANG_PROGRAM(
-    [[#include <sys/types.h>
-      #include <regex.h>
-      regex_t x; regmatch_t m;]],
-    [[return regcomp(&x,"pat.*",0) || regexec(&x,"pattern",1,&m,0);]])],
-  [ac_cv_func_regcomp=yes], [ac_cv_func_regcomp=no],
-  [AC_MSG_ERROR([Cannot test regcomp when cross compiling])])])
-AC_MSG_RESULT($ac_cv_func_regcomp)
-test $ac_cv_func_regcomp = yes && AC_DEFINE(HAVE_REGCOMP,1,[Define if regcomp exists and functions])
-dnl
-dnl Check for the compile and step functions - only if regcomp is not available
-dnl
-if test $ac_cv_func_regcomp = no; then
- save_LIBS="$LIBS"
- LIBS=-lgen
-dnl this will fail if there's no compile/step in -lgen, or if there's
-dnl no -lgen.  This is fine.
- AC_CHECK_FUNCS(compile step)
- LIBS="$save_LIBS"
-dnl
-dnl Set GEN_LIB if necessary 
-dnl
- AC_CHECK_LIB(gen, compile, GEN_LIB=-lgen, GEN_LIB=)
- AC_SUBST(GEN_LIB)
-fi
-])
-dnl
-dnl KRB5_AC_REGEX_FUNCS --- check for different regular expression 
-dnl				support functions
-dnl
-AC_DEFUN(KRB5_AC_REGEX_FUNCS,[
-AC_CHECK_FUNCS(re_comp re_exec regexec)
-AC_REQUIRE([KRB5_AC_NEED_LIBGEN])dnl
-])dnl
-dnl
 dnl WITH_HESIOD
 dnl
 AC_DEFUN(WITH_HESIOD,
@@ -851,7 +803,6 @@ dnl Set variables to build a program.
 
 AC_DEFUN(KRB5_BUILD_PROGRAM,
 [AC_REQUIRE([KRB5_LIB_AUX])dnl
-AC_REQUIRE([KRB5_AC_NEED_LIBGEN])dnl
 AC_SUBST(CC_LINK)
 AC_SUBST(CXX_LINK)
 AC_SUBST(RPATH_FLAG)

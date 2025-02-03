@@ -93,7 +93,7 @@ hash_bytes(krb5_context context, const void *ptr, size_t len)
     krb5_data d = make_data((void *) ptr, len);
     char *s = NULL;
 
-    if (krb5_k_make_checksum(context, CKSUMTYPE_NIST_SHA, NULL, 0, &d,
+    if (krb5_k_make_checksum(context, CKSUMTYPE_SHA1, NULL, 0, &d,
                              &cksum) != 0)
         return NULL;
     if (cksum.length >= 2)
@@ -164,6 +164,8 @@ padata_type_string(krb5_preauthtype type)
     case KRB5_ENCPADATA_REQ_ENC_PA_REP: return "PA-REQ-ENC-PA-REP";
     case KRB5_PADATA_AS_FRESHNESS: return "PA_AS_FRESHNESS";
     case KRB5_PADATA_SPAKE: return "PA-SPAKE";
+    case KRB5_PADATA_REDHAT_IDP_OAUTH2: return "PA-REDHAT-IDP-OAUTH2";
+    case KRB5_PADATA_REDHAT_PASSKEY: return "PA-REDHAT-PASSKEY";
     default: return NULL;
     }
 }
@@ -178,7 +180,7 @@ trace_format(krb5_context context, const char *fmt, va_list ap)
     struct remote_address *ra;
     const krb5_data *d;
     krb5_data data;
-    char addrbuf[NI_MAXHOST], portbuf[NI_MAXSERV], tmpbuf[200], *str;
+    char addrbuf[128], tmpbuf[200], *str;
     const char *p;
     krb5_const_principal princ;
     const krb5_keyblock *keyblock;
@@ -250,18 +252,13 @@ trace_format(krb5_context context, const char *fmt, va_list ap)
                 k5_buf_add(&buf, "stream");
             else if (ra->transport == HTTPS)
                 k5_buf_add(&buf, "https");
+            else if (ra->transport == UNIXSOCK)
+                k5_buf_add(&buf, "UNIX domain socket");
             else
                 k5_buf_add_fmt(&buf, "transport%d", ra->transport);
 
-            if (getnameinfo((struct sockaddr *)&ra->saddr, ra->len,
-                            addrbuf, sizeof(addrbuf), portbuf, sizeof(portbuf),
-                            NI_NUMERICHOST|NI_NUMERICSERV) != 0) {
-                if (ra->family == AF_UNSPEC)
-                    k5_buf_add(&buf, " AF_UNSPEC");
-                else
-                    k5_buf_add_fmt(&buf, " af%d", ra->family);
-            } else
-                k5_buf_add_fmt(&buf, " %s:%s", addrbuf, portbuf);
+            k5_print_addr_port(ss2sa(&ra->saddr), addrbuf, sizeof(addrbuf));
+            k5_buf_add_fmt(&buf, " %s", addrbuf);
         } else if (strcmp(tmpbuf, "data") == 0) {
             d = va_arg(ap, krb5_data *);
             if (d == NULL || (d->length != 0 && d->data == NULL))
@@ -365,7 +362,7 @@ trace_format(krb5_context context, const char *fmt, va_list ap)
                    creds->client, creds->server);
         }
     }
-    return buf.data;
+    return k5_buf_cstring(&buf);
 }
 
 /* Allows trace_format formatters to be represented in terms of other
@@ -409,7 +406,7 @@ krb5int_trace(krb5_context context, const char *fmt, ...)
     str = trace_format(context, fmt, ap);
     if (str == NULL)
         goto cleanup;
-    if (krb5_crypto_us_timeofday(&sec, &usec) != 0)
+    if (k5_us_timeofday(&sec, &usec) != 0)
         goto cleanup;
     if (asprintf(&msg, "[%d] %u.%06d: %s\n", (int)getpid(),
                  (unsigned int)sec, (int)usec, str) < 0)

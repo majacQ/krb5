@@ -44,6 +44,7 @@
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wuninitialized"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #endif
 
 #include "k5-int.h"
@@ -207,8 +208,8 @@ mylex(int *intp, struct param *tmv)
 	/* XXX assumes ASCII */
 	num = c - '0';
 	while (isdigit ((int) *P)) {
-	  if (num > MAX_TIME / 10)
-	    return tok_OVERFLOW;
+	    if (num > MAX_TIME / 10)
+	      return tok_OVERFLOW;
 	    num *= 10;
 	    if (num > MAX_TIME - (*P - '0'))
 	      return tok_OVERFLOW;

@@ -25,6 +25,9 @@
  */
 
 #include "crypto_int.h"
+
+#ifdef K5_OPENSSL_DES_KEY_PARITY
+
 #include <openssl/des.h>
 
 void
@@ -32,3 +35,5 @@ k5_des_fixup_key_parity(unsigned char *keybits)
 {
     DES_set_odd_parity((DES_cblock *)keybits);
 }
+
+#endif

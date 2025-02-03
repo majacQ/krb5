@@ -68,9 +68,7 @@
 #include "os-proto.h"
 #include <krb5/localauth_plugin.h>
 #include <ctype.h>
-
-#ifdef HAVE_REGEX_H
-#include <regex.h>
+#include "k5-regex.h"
 
 /* Process the match portion of a rule and update *contextp.  Return
  * KRB5_LNAME_NOTRANS if selstring doesn't match the regexp. */
@@ -130,10 +128,8 @@ do_replacement(const char *regstr, const char *repl, krb5_boolean doall,
     }
     regfree(&re);
     k5_buf_add(&buf, instr);
-    if (k5_buf_status(&buf) != 0)
-        return ENOMEM;
-    *outstr = buf.data;
-    return 0;
+    *outstr = k5_buf_cstring(&buf);
+    return (*outstr == NULL) ? ENOMEM : 0;
 }
 
 /*
@@ -265,11 +261,10 @@ aname_get_selstring(krb5_context context, krb5_const_principal aname,
         return KRB5_CONFIG_BADFORMAT;
     }
 
-    if (k5_buf_status(&selstring) != 0)
+    *selstring_out = k5_buf_cstring(&selstring);
+    if (*selstring_out == NULL)
         return ENOMEM;
-
     *contextp = current + 1;
-    *selstring_out = selstring.data;
     return 0;
 }
 
@@ -305,17 +300,6 @@ cleanup:
     free(selstring);
     return ret;
 }
-
-#else /* HAVE_REGEX_H */
-
-static krb5_error_code
-an2ln_rule(krb5_context context, krb5_localauth_moddata data, const char *type,
-           const char *rule, krb5_const_principal aname, char **lname_out)
-{
-    return KRB5_LNAME_NOTRANS;
-}
-
-#endif
 
 static void
 freestr(krb5_context context, krb5_localauth_moddata data, char *str)

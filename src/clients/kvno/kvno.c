@@ -39,7 +39,7 @@ static char *prog;
 static int quiet = 0;
 
 static void
-xusage()
+xusage(void)
 {
     fprintf(stderr, _("usage: %s [-c ccache] [-e etype] [-k keytab] [-q] "
                       "[-u | -S sname]\n"
@@ -222,7 +222,7 @@ read_pem_file(char *file_name, krb5_data *der_out)
     FILE *fp = NULL;
     const char *begin_line = "-----BEGIN CERTIFICATE-----";
     const char *end_line = "-----END ", *line;
-    char linebuf[256];
+    char linebuf[256], *b64;
     struct k5buf buf = EMPTY_K5BUF;
     uint8_t *der_cert;
     size_t dlen;
@@ -267,7 +267,12 @@ read_pem_file(char *file_name, krb5_data *der_out)
         k5_buf_add(&buf, line);
     }
 
-    der_cert = k5_base64_decode(buf.data, &dlen);
+    b64 = k5_buf_cstring(&buf);
+    if (b64 == NULL) {
+        ret = ENOMEM;
+        goto cleanup;
+    }
+    der_cert = k5_base64_decode(b64, &dlen);
     if (der_cert == NULL) {
         ret = EINVAL;
         k5_setmsg(context, ret, _("Invalid base64"));

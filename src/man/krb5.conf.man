@@ -1,8 +1,5 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "KRB5.CONF" "5" " " "1.20" "MIT Kerberos"
-.SH NAME
-krb5.conf \- Kerberos configuration file
 .
 .nr rst2man-indent-level 0
 .
@@ -30,6 +27,9 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
+.TH "KRB5.CONF" "5" " " "1.22" "MIT Kerberos"
+.SH NAME
+krb5.conf \- Kerberos configuration file
 .sp
 The krb5.conf file contains Kerberos configuration information,
 including the locations of KDCs and admin servers for the Kerberos
@@ -76,12 +76,6 @@ fubar = {
 .UNINDENT
 .UNINDENT
 .sp
-Placing a \(aq*\(aq after the closing bracket of a section name indicates
-that the section is \fIfinal\fP, meaning that if the same section appears
-within a later file specified in \fBKRB5_CONFIG\fP, it will be ignored.
-A subsection can be marked as final by placing a \(aq*\(aq after either the
-tag name or the closing brace.
-.sp
 The krb5.conf file can include other files using either of the
 following directives at the beginning of a line:
 .INDENT 0.0
@@ -106,6 +100,16 @@ independent of their parents, so each included file must begin with a
 section header.  Starting in release 1.17, files are read in
 alphanumeric order; in previous releases, they may be read in any
 order.
+.sp
+Placing a \(aq*\(aq after the closing bracket of a section name indicates
+that the section is \fIfinal\fP, meaning that if the same section appears
+again later, it will be ignored.  A subsection can be marked as final
+by placing a \(aq*\(aq after either the tag name or the closing brace.  A
+relation can be marked as final by placing a \(aq*\(aq after the tag name.
+Prior to release 1.22, only sections and subsections can be marked as
+final, and the flag only causes values to be ignored if they appear in
+later files specified in \fBKRB5_CONFIG\fP, not if they appear later
+within the same file or an included file.
 .sp
 The krb5.conf file can specify that configuration should be obtained
 from a loadable module, rather than the file itself, using the
@@ -177,6 +181,18 @@ kdc.conf(5), but it is not a recommended practice.
 .sp
 The libdefaults section may contain any of the following relations:
 .INDENT 0.0
+.TP
+\fBallow_des3\fP
+Permit the KDC to issue tickets with des3\-cbc\-sha1 session keys.
+In future releases, this flag will allow des3\-cbc\-sha1 to be used
+at all.  The default value for this tag is false.  (Added in
+release 1.21.)
+.TP
+\fBallow_rc4\fP
+Permit the KDC to issue tickets with arcfour\-hmac session keys.
+In future releases, this flag will allow arcfour\-hmac to be used
+at all.  The default value for this tag is false.  (Added in
+release 1.21.)
 .TP
 \fBallow_weak_crypto\fP
 If this flag is set to false, then weak encryption types (as noted
@@ -291,6 +307,12 @@ because that fake KDC will be unable to decode anything you send
 it (besides the initial ticket request, which has no encrypted
 data), and anything the fake KDC sends will not be trusted without
 verification using some secret that it won\(aqt know.
+.TP
+\fBdns_lookup_realm\fP
+Indicate whether DNS TXT records should be used to map hostnames
+to realm names for hostnames not listed in the [domain_realm]
+section, and to determine the default realm if \fBdefault_realm\fP
+is not set.  The default value is false.
 .TP
 \fBdns_uri_lookup\fP
 Indicate whether DNS URI records should be used to locate the KDCs
@@ -432,6 +454,15 @@ set.  The default is not to search domain components.
 \fBrenew_lifetime\fP
 (duration string.)  Sets the default renewable lifetime
 for initial ticket requests.  The default value is 0.
+.TP
+\fBrequest_timeout\fP
+(duration string.)  Sets the maximum total time for KDC and
+password change requests.  This timeout does not affect the
+intervals between requests, so setting a low timeout may result in
+fewer requests being attempted and/or some servers not being
+contacted.  A value of 0 indicates no specific maximum, in which
+case requests will time out if no server responds after several
+tries.  The default value is 0.  (New in release 1.22.)
 .TP
 \fBspake_preauth_groups\fP
 A whitespace or comma\-separated list of words which specifies the
@@ -637,6 +668,10 @@ invalid password, the client software will attempt to contact the
 primary KDC, in case the user\(aqs password has just been changed, and
 the updated database has not been propagated to the replica
 servers yet.  New in release 1.19.
+.TP
+\fBsitename\fP
+Specifies the name of the host\(aqs site for the purpose of DNS\-based
+KDC discovery for this realm.  New in release 1.22.
 .TP
 \fBv4_instance_convert\fP
 This subsection allows the administrator to configure exceptions
@@ -1148,7 +1183,7 @@ user\(aqs certificate and private key.
 All keyword/values are optional.  \fImodname\fP specifies the location
 of a library implementing PKCS #11.  If a value is encountered
 with no keyword, it is assumed to be the \fImodname\fP\&.  If no
-module\-name is specified, the default is \fBopensc\-pkcs11.so\fP\&.
+module\-name is specified, the default is \fB@PKCS11MOD@\fP\&.
 \fBslotid=\fP and/or \fBtoken=\fP may be specified to force the use of
 a particular smard card reader or token if there is more than one
 available.  \fBcertid=\fP and/or \fBcertlabel=\fP may be specified to
@@ -1281,9 +1316,10 @@ option is not recommended.
 .UNINDENT
 .TP
 \fBpkinit_dh_min_bits\fP
-Specifies the size of the Diffie\-Hellman key the client will
-attempt to use.  The acceptable values are 1024, 2048, and 4096.
-The default is 2048.
+Specifies the group of the Diffie\-Hellman key the client will
+attempt to use.  The acceptable values are 1024, 2048, P\-256,
+4096, P\-384, and P\-521.  The default is 2048.  (P\-256, P\-384, and
+P\-521 are new in release 1.22.)
 .TP
 \fBpkinit_identities\fP
 Specifies the location(s) to be used to find the user\(aqs X.509
@@ -1488,6 +1524,6 @@ syslog(3)
 .SH AUTHOR
 MIT
 .SH COPYRIGHT
-1985-2021, MIT
+1985-2024, MIT
 .\" Generated by docutils manpage writer.
 .

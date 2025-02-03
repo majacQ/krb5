@@ -33,8 +33,7 @@
 #include <arpa/inet.h>
 #include <string.h>
 
-static krb5_error_code make_too_big_error(kdc_realm_t *kdc_active_realm,
-                                          krb5_data **out);
+static krb5_error_code make_too_big_error(kdc_realm_t *realm, krb5_data **out);
 
 struct dispatch_state {
     loop_respond_fn respond;
@@ -51,13 +50,12 @@ finish_dispatch(struct dispatch_state *state, krb5_error_code code,
 {
     loop_respond_fn oldrespond = state->respond;
     void *oldarg = state->arg;
-    kdc_realm_t *kdc_active_realm = state->active_realm;
 
     if (state->is_tcp == 0 && response &&
         response->length > (unsigned int)max_dgram_reply_size) {
-        krb5_free_data(kdc_context, response);
+        krb5_free_data(NULL, response);
         response = NULL;
-        code = make_too_big_error(kdc_active_realm, &response);
+        code = make_too_big_error(state->active_realm, &response);
         if (code)
             krb5_klog_syslog(LOG_ERR, "error constructing "
                              "KRB_ERR_RESPONSE_TOO_BIG error: %s",
@@ -89,8 +87,8 @@ finish_dispatch_cache(void *arg, krb5_error_code code, krb5_data *response)
 }
 
 void
-dispatch(void *cb, const krb5_fulladdr *local_addr,
-         const krb5_fulladdr *remote_addr, krb5_data *pkt, int is_tcp,
+dispatch(void *cb, const struct sockaddr *local_addr,
+         const struct sockaddr *remote_addr, krb5_data *pkt, int is_tcp,
          verto_ctx *vctx, loop_respond_fn respond, void *arg)
 {
     krb5_error_code retval;
@@ -118,10 +116,9 @@ dispatch(void *cb, const krb5_fulladdr *local_addr,
     if (kdc_check_lookaside(kdc_err_context, pkt, &response)) {
         /* a hit! */
         const char *name = 0;
-        char buf[46];
+        char buf[128];
 
-        name = inet_ntop(ADDRTYPE2FAMILY(remote_addr->address->addrtype),
-                         remote_addr->address->contents, buf, sizeof(buf));
+        k5_print_addr(remote_addr, buf, sizeof(buf));
         if (name == 0)
             name = "[unknown address type]";
         if (response)
@@ -178,8 +175,9 @@ done:
 }
 
 static krb5_error_code
-make_too_big_error(kdc_realm_t *kdc_active_realm, krb5_data **out)
+make_too_big_error(kdc_realm_t *realm, krb5_data **out)
 {
+    krb5_context context = realm->realm_context;
     krb5_error errpkt;
     krb5_error_code retval;
     krb5_data *scratch;
@@ -187,11 +185,11 @@ make_too_big_error(kdc_realm_t *kdc_active_realm, krb5_data **out)
     *out = NULL;
     memset(&errpkt, 0, sizeof(errpkt));
 
-    retval = krb5_us_timeofday(kdc_context, &errpkt.stime, &errpkt.susec);
+    retval = krb5_us_timeofday(context, &errpkt.stime, &errpkt.susec);
     if (retval)
         return retval;
     errpkt.error = KRB_ERR_RESPONSE_TOO_BIG;
-    errpkt.server = tgs_server;
+    errpkt.server = realm->realm_tgsprinc;
     errpkt.client = NULL;
     errpkt.text.length = 0;
     errpkt.text.data = 0;
@@ -200,7 +198,7 @@ make_too_big_error(kdc_realm_t *kdc_active_realm, krb5_data **out)
     scratch = malloc(sizeof(*scratch));
     if (scratch == NULL)
         return ENOMEM;
-    retval = krb5_mk_error(kdc_context, &errpkt, scratch);
+    retval = krb5_mk_error(context, &errpkt, scratch);
     if (retval) {
         free(scratch);
         return retval;

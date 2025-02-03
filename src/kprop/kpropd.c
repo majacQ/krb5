@@ -55,6 +55,7 @@
 #include "com_err.h"
 #include "fake-addrinfo.h"
 
+#include <inttypes.h>
 #include <locale.h>
 #include <ctype.h>
 #include <sys/file.h>
@@ -139,7 +140,7 @@ static krb5_address *receiver_addr;
 static const char *port = KPROP_SERVICE;
 
 static char **db_args = NULL;
-static int db_args_size = 0;
+static size_t db_args_size = 0;
 
 static void parse_args(int argc, char **argv);
 static void do_standalone(void);
@@ -164,7 +165,7 @@ static kadm5_ret_t kadm5_get_kiprop_host_srv_name(krb5_context context,
                                                   char **host_service_name);
 
 static void
-usage()
+usage(void)
 {
     fprintf(stderr,
             _("\nUsage: %s [-r realm] [-s keytab] [-d] [-D] [-S]\n"
@@ -180,14 +181,15 @@ write_pid_file(const char *path)
 {
     FILE *fp;
     unsigned long pid;
+    int st1, st2;
 
     fp = fopen(path, "w");
     if (fp == NULL)
         return errno;
     pid = (unsigned long)getpid();
-    if (fprintf(fp, "%ld\n", pid) < 0 || fclose(fp) == EOF)
-        return errno;
-    return 0;
+    st1 = (fprintf(fp, "%ld\n", pid) < 0) ? errno : 0;
+    st2 = (fclose(fp) == EOF) ? errno : 0;
+    return st1 ? st1 : st2;
 }
 
 typedef void (*sig_handler_fn)(int sig);
@@ -375,7 +377,7 @@ get_wildcard_addr(struct addrinfo **res)
 }
 
 static void
-do_standalone()
+do_standalone(void)
 {
     struct sockaddr_in frominet;
     struct addrinfo *res;
@@ -629,7 +631,7 @@ full_resync(CLIENT *clnt)
  * Returns non-zero on failure due to errors.
  */
 krb5_error_code
-do_iprop()
+do_iprop(void)
 {
     kadm5_ret_t retval;
     krb5_principal iprop_svc_principal = NULL;
@@ -1046,6 +1048,7 @@ parse_args(int argc, char **argv)
     enum { PID_FILE = 256 };
     struct option long_options[] = {
         { "pid-file", 1, NULL, PID_FILE },
+        { NULL, 0, NULL, 0 },
     };
 
     memset(&params, 0, sizeof(params));
@@ -1183,6 +1186,7 @@ kerberos_authenticate(krb5_context context, int fd, krb5_principal *clientp,
                       krb5_enctype *etype, struct sockaddr_storage *my_sin)
 {
     krb5_error_code retval;
+    krb5_address addr;
     krb5_ticket *ticket;
     struct sockaddr_storage r_sin;
     GETSOCKNAME_ARG3_TYPE sin_length;
@@ -1195,8 +1199,13 @@ kerberos_authenticate(krb5_context context, int fd, krb5_principal *clientp,
         exit(1);
     }
 
-    sockaddr2krbaddr(context, r_sin.ss_family, (struct sockaddr *)&r_sin,
-                     &receiver_addr);
+    if (k5_sockaddr_to_address(ss2sa(my_sin), FALSE, &addr) != 0)
+        addr = k5_addr_directional_accept;
+    retval = krb5_copy_addr(context, &addr, &receiver_addr);
+    if (retval) {
+        com_err(progname, retval, _("while converting local address"));
+        exit(1);
+    }
 
     if (debug) {
         retval = krb5_unparse_name(context, server, &name);
@@ -1289,19 +1298,20 @@ static krb5_boolean
 authorized_principal(krb5_context context, krb5_principal p,
                      krb5_enctype auth_etype)
 {
-    char *name, *ptr, buf[1024];
+    krb5_boolean ok = FALSE;
+    char *name = NULL, *ptr, buf[1024];
     krb5_error_code retval;
-    FILE *acl_file;
+    FILE *acl_file = NULL;
     int end;
     krb5_enctype acl_etype;
 
     retval = krb5_unparse_name(context, p, &name);
     if (retval)
-        return FALSE;
+        goto cleanup;
 
     acl_file = fopen(acl_file_name, "r");
     if (acl_file == NULL)
-        return FALSE;
+        goto cleanup;
 
     while (!feof(acl_file)) {
         if (!fgets(buf, sizeof(buf), acl_file))
@@ -1331,23 +1341,26 @@ authorized_principal(krb5_context context, krb5_principal p,
                  (acl_etype != auth_etype)))
                 continue;
 
-            free(name);
-            fclose(acl_file);
-            return TRUE;
+            ok = TRUE;
+            goto cleanup;
         }
     }
+
+cleanup:
     free(name);
-    fclose(acl_file);
-    return FALSE;
+    if (acl_file != NULL)
+        fclose(acl_file);
+    return ok;
 }
 
 static void
 recv_database(krb5_context context, int fd, int database_fd,
               krb5_data *confmsg)
 {
-    krb5_ui_4 database_size, received_size;
+    uint64_t database_size, received_size;
     int n;
     char buf[1024];
+    char dbsize_buf[KPROP_DBSIZE_MAX_BUFSIZ];
     krb5_data inbuf, outbuf;
     krb5_error_code retval;
 
@@ -1369,10 +1382,17 @@ recv_database(krb5_context context, int fd, int database_fd,
                 _("while decoding database size from client"));
         exit(1);
     }
-    memcpy(&database_size, outbuf.data, sizeof(database_size));
+
+    retval = decode_database_size(&outbuf, &database_size);
+    if (retval) {
+        send_error(context, fd, retval, "malformed database size message");
+        com_err(progname, retval,
+                _("malformed database size message from client"));
+        exit(1);
+    }
+
     krb5_free_data_contents(context, &inbuf);
     krb5_free_data_contents(context, &outbuf);
-    database_size = ntohl(database_size);
 
     /* Initialize the initial vector. */
     retval = krb5_auth_con_initivector(context, auth_context);
@@ -1392,7 +1412,7 @@ recv_database(krb5_context context, int fd, int database_fd,
         retval = krb5_read_message(context, &fd, &inbuf);
         if (retval) {
             snprintf(buf, sizeof(buf),
-                     "while reading database block starting at offset %d",
+                     "while reading database block starting at offset %"PRIu64,
                      received_size);
             com_err(progname, retval, "%s", buf);
             send_error(context, fd, retval, buf);
@@ -1403,8 +1423,8 @@ recv_database(krb5_context context, int fd, int database_fd,
         retval = krb5_rd_priv(context, auth_context, &inbuf, &outbuf, NULL);
         if (retval) {
             snprintf(buf, sizeof(buf),
-                     "while decoding database block starting at offset %d",
-                     received_size);
+                     "while decoding database block starting at offset %"
+                     PRIu64, received_size);
             com_err(progname, retval, "%s", buf);
             send_error(context, fd, retval, buf);
             krb5_free_data_contents(context, &inbuf);
@@ -1414,13 +1434,13 @@ recv_database(krb5_context context, int fd, int database_fd,
         krb5_free_data_contents(context, &inbuf);
         if (n < 0) {
             snprintf(buf, sizeof(buf),
-                     "while writing database block starting at offset %d",
+                     "while writing database block starting at offset %"PRIu64,
                      received_size);
             send_error(context, fd, errno, buf);
         } else if ((unsigned int)n != outbuf.length) {
             snprintf(buf, sizeof(buf),
                      "incomplete write while writing database block starting "
-                     "at \noffset %d (%d written, %d expected)",
+                     "at \noffset %"PRIu64" (%d written, %d expected)",
                      received_size, n, outbuf.length);
             send_error(context, fd, KRB5KRB_ERR_GENERIC, buf);
         }
@@ -1431,7 +1451,8 @@ recv_database(krb5_context context, int fd, int database_fd,
     /* OK, we've seen the entire file.  Did we get too many bytes? */
     if (received_size > database_size) {
         snprintf(buf, sizeof(buf),
-                 "Received %d bytes, expected %d bytes for database file",
+                 "Received %"PRIu64" bytes, expected %"PRIu64
+                 " bytes for database file",
                  received_size, database_size);
         send_error(context, fd, KRB5KRB_ERR_GENERIC, buf);
     }
@@ -1441,9 +1462,8 @@ recv_database(krb5_context context, int fd, int database_fd,
 
     /* Create message acknowledging number of bytes received, but
      * don't send it until kdb5_util returns successfully. */
-    database_size = htonl(database_size);
-    inbuf.data = (char *)&database_size;
-    inbuf.length = sizeof(database_size);
+    inbuf = make_data(dbsize_buf, sizeof(dbsize_buf));
+    encode_database_size(database_size, &inbuf);
     retval = krb5_mk_safe(context,auth_context,&inbuf,confmsg,NULL);
     if (retval) {
         com_err(progname, retval, "while encoding # of received bytes");

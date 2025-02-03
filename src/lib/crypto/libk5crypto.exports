@@ -88,7 +88,7 @@ krb5int_aes_encrypt
 krb5int_aes_decrypt
 krb5int_enc_des3
 krb5int_arcfour_gsscrypt
-krb5int_camellia_cbc_mac
+krb5int_camellia_encrypt
 krb5int_cmac_checksum
 krb5int_enc_aes128
 krb5int_enc_aes256
@@ -103,3 +103,4 @@ krb5_c_prfplus
 krb5_c_derive_prfplus
 k5_enctype_to_ssf
 krb5int_c_deprecated_enctype
+k5_hmac_md5

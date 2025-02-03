@@ -259,7 +259,7 @@ krb5_free_enc_data(krb5_context context, krb5_enc_data *val)
 
 void krb5_free_etype_info(krb5_context context, krb5_etype_info info)
 {
-    int i;
+    size_t i;
 
     if (info == NULL)
         return;
@@ -710,7 +710,7 @@ krb5_free_fast_armored_req(krb5_context context, krb5_fast_armored_req *val)
 void
 k5_free_data_ptr_list(krb5_data **list)
 {
-    int i;
+    size_t i;
 
     for (i = 0; list != NULL && list[i] != NULL; i++)
         krb5_free_data(NULL, list[i]);
@@ -720,7 +720,7 @@ k5_free_data_ptr_list(krb5_data **list)
 void KRB5_CALLCONV
 krb5int_free_data_list(krb5_context context, krb5_data *data)
 {
-    int i;
+    size_t i;
 
     if (data == NULL)
         return;
@@ -740,24 +740,6 @@ krb5_free_ad_kdcissued(krb5_context context, krb5_ad_kdcissued *val)
     krb5_free_checksum_contents(context, &val->ad_checksum);
     krb5_free_principal(context, val->i_principal);
     krb5_free_authdata(context, val->elements);
-    free(val);
-}
-
-void KRB5_CALLCONV
-krb5_free_ad_signedpath(krb5_context context, krb5_ad_signedpath *val)
-{
-    int i;
-
-    if (val == NULL)
-        return;
-
-    krb5_free_checksum_contents(context, &val->checksum);
-    if (val->delegated != NULL) {
-        for (i = 0; val->delegated[i] != NULL; i++)
-            krb5_free_principal(context, val->delegated[i]);
-        free(val->delegated);
-    }
-    krb5_free_pa_data(context, val->method_data);
     free(val);
 }
 

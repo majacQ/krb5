@@ -29,43 +29,6 @@
 #include "k5-int.h"
 #include "kprop.h"
 
-#include <sys/types.h>
-#include <sys/socket.h>
-
-/*
- * Convert an IPv4 or IPv6 socket address to a newly allocated krb5_address.
- * There is similar code elsewhere in the tree, so this should possibly become
- * a libkrb5 API in the future.
- */
-krb5_error_code
-sockaddr2krbaddr(krb5_context context, int family, struct sockaddr *sa,
-                 krb5_address **dest)
-{
-    krb5_address addr;
-
-    addr.magic = KV5M_ADDRESS;
-    if (family == AF_INET) {
-        struct sockaddr_in *sa4 = sa2sin(sa);
-        addr.addrtype = ADDRTYPE_INET;
-        addr.length = sizeof(sa4->sin_addr);
-        addr.contents = (krb5_octet *) &sa4->sin_addr;
-    } else if (family == AF_INET6) {
-        struct sockaddr_in6 *sa6 = sa2sin6(sa);
-        if (IN6_IS_ADDR_V4MAPPED(&sa6->sin6_addr)) {
-            addr.addrtype = ADDRTYPE_INET;
-            addr.contents = (krb5_octet *) &sa6->sin6_addr + 12;
-            addr.length = 4;
-        } else {
-            addr.addrtype = ADDRTYPE_INET6;
-            addr.length = sizeof(sa6->sin6_addr);
-            addr.contents = (krb5_octet *) &sa6->sin6_addr;
-        }
-    } else
-        return KRB5_PROG_ATYPE_NOSUPP;
-
-    return krb5_copy_addr(context, &addr, dest);
-}
-
 /* Construct a host-based principal, similar to krb5_sname_to_principal() but
  * with a specified realm. */
 krb5_error_code
@@ -90,5 +53,47 @@ sn2princ_realm(krb5_context context, const char *hostname, const char *sname,
     }
 
     *princ_out = princ;
+    return 0;
+}
+
+void
+encode_database_size(uint64_t size, krb5_data *buf)
+{
+    assert(buf->length >= 12);
+    if (size > 0 && size <= UINT32_MAX) {
+        /* Encode in 32 bits for backward compatibility. */
+        store_32_be(size, buf->data);
+        buf->length = 4;
+    } else {
+        /* Set the first 32 bits to 0 and encode in the following 64 bits. */
+        store_32_be(0, buf->data);
+        store_64_be(size, buf->data + 4);
+        buf->length = 12;
+    }
+}
+
+krb5_error_code
+decode_database_size(const krb5_data *buf, uint64_t *size_out)
+{
+    uint64_t size;
+
+    if (buf->length == 12) {
+        /* A 12-byte buffer must have the first four bytes zeroed. */
+        if (load_32_be(buf->data) != 0)
+            return KRB5KRB_ERR_GENERIC;
+
+        /* The size is stored in the next 64 bits.  Values from 1..2^32-1 must
+         * be encoded in four bytes. */
+        size = load_64_be(buf->data + 4);
+        if (size > 0 && size <= UINT32_MAX)
+            return KRB5KRB_ERR_GENERIC;
+    } else if (buf->length == 4) {
+        size = load_32_be(buf->data);
+    } else {
+        /* Invalid buffer size. */
+        return KRB5KRB_ERR_GENERIC;
+    }
+
+    *size_out = size;
     return 0;
 }
